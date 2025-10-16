@@ -4,18 +4,19 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from urllib.parse import urlparse
 
 def process_scheduled_call(influxdb3_local, call_time, args=None):
+    """
+    Main function to find and download parquet files from S3.
+    
+    Args:
+        influxdb3_local: Logger object for logging messages
+        call_time: Time when the function was called
+        args: Dictionary containing arguments, should include 's3uri' key
+    """
     s3_uri = ""
     if args and "s3uri" in args:
         s3_uri = str(args["s3uri"])
     else:
         influxdb3_local.info("s3uri not supplied in args")
-
-    """
-    Main function to find and download parquet files from S3.
-    
-    Args:
-        s3_uri (str): S3 URI in format s3://bucket-name/prefix/
-    """
     try:
         # Parse S3 URI
         bucket_name, prefix = parse_s3_uri(s3_uri)
