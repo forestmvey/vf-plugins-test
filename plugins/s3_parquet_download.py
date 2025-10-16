@@ -1,8 +1,9 @@
+import boto3
+import os
+from botocore.exceptions import ClientError, NoCredentialsError
+from urllib.parse import urlparse
+
 def process_scheduled_call(influxdb3_local, call_time, args=None):
-    import boto3
-    import os
-    from botocore.exceptions import ClientError, NoCredentialsError
-    from urllib.parse import urlparse
 
     s3_uri = ""
     if args and "s3uri" in args:
@@ -118,14 +119,18 @@ def find_parquet_files(s3_client, bucket_name, prefix="", influxdb3_local=None):
     except ClientError as e:
         error_code = e.response['Error']['Code']
         if error_code == 'NoSuchBucket':
-            influxdb3_local.info("Error: Bucket " + bucket_name + " does not exist.")
+            if influxdb3_local:
+                influxdb3_local.info("Error: Bucket " + bucket_name + " does not exist.")
         elif error_code == 'AccessDenied':
-            influxdb3_local.info("Error: Access denied to bucket " + bucket_name + ". Check your AWS credentials and permissions.")
+            if influxdb3_local:
+                influxdb3_local.info("Error: Access denied to bucket " + bucket_name + ". Check your AWS credentials and permissions.")
         else:
-            influxdb3_local.info("Error listing objects in bucket " + bucket_name + ": " + str(e))
+            if influxdb3_local:
+                influxdb3_local.info("Error listing objects in bucket " + bucket_name + ": " + str(e))
         return []
     except Exception as e:
-        influxdb3_local.info("Unexpected error while listing objects: " + str(e))
+        if influxdb3_local:
+            influxdb3_local.info("Unexpected error while listing objects: " + str(e))
         return []
     
     return parquet_files
@@ -149,14 +154,18 @@ def download_file(s3_client, bucket_name, s3_key, local_filename, influxdb3_loca
     except ClientError as e:
         error_code = e.response['Error']['Code']
         if error_code == 'NoSuchKey':
-            influxdb3_local.info("Error: File " + s3_key + " does not exist in bucket " + bucket_name + ".")
+            if influxdb3_local:
+                influxdb3_local.info("Error: File " + s3_key + " does not exist in bucket " + bucket_name + ".")
         elif error_code == 'AccessDenied':
-            influxdb3_local.info("Error: Access denied to file " + s3_key + ". Check your AWS permissions.")
+            if influxdb3_local:
+                influxdb3_local.info("Error: Access denied to file " + s3_key + ". Check your AWS permissions.")
         else:
-            influxdb3_local.info("Error downloading file " + s3_key + ": " + str(e))
+            if influxdb3_local:
+                influxdb3_local.info("Error downloading file " + s3_key + ": " + str(e))
         return False
     except Exception as e:
-        influxdb3_local.info("Unexpected error downloading file " + s3_key + ": " + str(e))
+        if influxdb3_local:
+            influxdb3_local.info("Unexpected error downloading file " + s3_key + ": " + str(e))
         return False
 
 def cleanup_file(filename, influxdb3_local=None):
@@ -170,9 +179,13 @@ def cleanup_file(filename, influxdb3_local=None):
     try:
         if os.path.exists(filename):
             os.remove(filename)
-            influxdb3_local.info("Cleaned up: Deleted " + filename)
+            if influxdb3_local:
+                influxdb3_local.info("Cleaned up: Deleted " + filename)
         else:
-            influxdb3_local.info("File " + filename + " not found for cleanup")
+            if influxdb3_local:
+                influxdb3_local.info("File " + filename + " not found for cleanup")
     except Exception as e:
-        influxdb3_local.info("Error deleting file " + filename + ": " + str(e))
+        if influxdb3_local:
+            influxdb3_local.info("Error deleting file " + filename + ": " + str(e))
+
 
