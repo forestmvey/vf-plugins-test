@@ -4,7 +4,6 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from urllib.parse import urlparse
 
 def process_scheduled_call(influxdb3_local, call_time, args=None):
-
     s3_uri = ""
     if args and "s3uri" in args:
         s3_uri = str(args["s3uri"])
