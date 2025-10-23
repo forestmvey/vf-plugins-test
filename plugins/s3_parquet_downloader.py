@@ -1,7 +1,7 @@
-import boto3
 import os
-from botocore.exceptions import ClientError, NoCredentialsError
 from urllib.parse import urlparse
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
 
 def process_scheduled_call(influxdb3_local, call_time, args=None):
     """
