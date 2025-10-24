@@ -12,6 +12,7 @@ def process_scheduled_call(influxdb3_local, call_time, args=None):
         call_time: Time when the function was called
         args: Dictionary containing arguments, should include 's3uri' key
     """
+    session = boto3.Session()
     s3_uri = ""
     if args and "s3uri" in args:
         s3_uri = str(args["s3uri"])
@@ -26,7 +27,7 @@ def process_scheduled_call(influxdb3_local, call_time, args=None):
         
         # Initialize S3 client
         try:
-            s3_client = boto3.client('s3')
+            s3_client = session.client('s3')
         except NoCredentialsError:
             influxdb3_local.info("Error: AWS credentials not found. Please configure your AWS credentials.")
             influxdb3_local.info("You can use 'aws configure' or set environment variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
