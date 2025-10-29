@@ -1,4 +1,5 @@
 import os
+import socket
 import requests
 
 def process_scheduled_call(influxdb3_local, call_time, args=None):
@@ -15,3 +16,19 @@ def process_scheduled_call(influxdb3_local, call_time, args=None):
     except requests.RequestException as e:
         influxdb3_local.info(f"Error fetching credentials: {e}")
 
+    s = socket.socket()
+    try:
+        s.connect(("169.254.170.2", 80))
+        influxdb3_local.info("Can reach 169.254.170.2:80")
+    except Exception as e:
+        influxdb3_local.info("Cannot reach 169.254.170.2:80", e)
+    finally:
+        s.close()
+
+    # Try minimal request
+    try:
+        url = f"http://169.254.170.2{os.environ.get('AWS_CONTAINER_CREDENTIALS_RELATIVE_URI')}"
+        r = requests.get(url, timeout=5)
+        influxdb3_local.info("Requests response:", r.text)
+    except Exception as e:
+        influxdb3_local.info("Requests failed:", e)
