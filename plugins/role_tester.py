@@ -1,23 +1,16 @@
-import urllib.request
-import os
-import json
+import socket
 
 def process_scheduled_call(influxdb3_local, call_time, args=None):
-    # Construct the URL
-    relative_uri = os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
-    if not relative_uri:
-        raise ValueError("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI is not set")
-    url = f"http://169.254.170.2{relative_uri}"
+    host = "169.254.170.2"
+    port = 80
 
-    # Perform GET request
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(10)
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
-            if response.status == 200:
-                data = response.read()
-                credentials = json.loads(data)
-                influxdb3_local.info(credentials)  # or use them in your code
-            else:
-                influxdb3_local.info(f"Request failed with status code: {response.status}")
+        s.connect((host, port))
+        influxdb3_local.info("Socket connection successful")
     except Exception as e:
-        influxdb3_local.info(f"Error fetching credentials: {e}")
+        influxdb3_local.info(f"Socket connection failed: {e}")
+    finally:
+        s.close()
 
