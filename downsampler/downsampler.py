@@ -1048,23 +1048,24 @@ def generate_moving_avg_fields_string(
     moving_avg_window: Optional[int] = None,
 ):
     """
-    Generates the SELECT clause for moving average queries without GROUP BY.
+    Generates the SELECT clause for moving average queries with GROUP BY.
+
+    Uses AVG(AVG(field)) OVER (...) with a time-based RANGE window,
+    producing queries that group by time and partition tags.
 
     Args:
         fields_aggregate_list (list[tuple[str, str]]): List of tuples containing field names and aggregation functions.
         interval (tuple[int, str]): Tuple of interval magnitude and unit (e.g., (10, 'minutes')).
         partition_tags (list[str]): List of tag names to use in PARTITION BY clause and SELECT output for moving averages.
-        moving_avg_window (Optional[int]): Number of rows for moving average window (default: None).
+        moving_avg_window (Optional[int]): Window size in seconds for the RANGE interval (default: 7).
 
     Returns:
         str: SQL SELECT clause string for moving average queries.
     """
-    query: str = (
-        f"DATE_BIN(INTERVAL '{interval[0]} {interval[1]}', time, '1970-01-01T00:00:00Z') AS _time,\n \
-    \t1 AS record_count,\n \
-    \ttime AS time_from,\n \
-    \ttime AS time_to"
-    )
+    query: str = "time"
+
+    for tag in partition_tags:
+        query += f',\n\t"{tag}"'
 
     for field in fields_aggregate_list:
         query += ",\n"
@@ -1072,24 +1073,23 @@ def generate_moving_avg_fields_string(
         field_name = field[0]
 
         if aggregation == 'moving_avg':
-            # Generate moving average using window function
             if moving_avg_window is None:
-                moving_avg_window = 7  # Default window size
-            
-            # Build partition clause with specified partition tags only
+                moving_avg_window = 7
+
             partition_clause = ""
             if partition_tags:
                 partition_parts = [f'"{tag}"' for tag in partition_tags]
                 partition_clause = f"PARTITION BY {', '.join(partition_parts)} "
-            
-            query += f'\tAVG("{field_name}") OVER ({partition_clause}ORDER BY time ROWS BETWEEN {moving_avg_window - 1} PRECEDING AND CURRENT ROW) as "{field_name}_moving_avg"'
-        else:
-            # For other aggregations in mixed queries, use them as-is (this shouldn't normally happen in pure moving avg queries)
-            query += f'\t"{field_name}" as "{field_name}_{aggregation}"'
 
-    # Only include partition_tags in the SELECT output (not all tags)
-    for tag in partition_tags:
-        query += f',\n\t"{tag}"'
+            query += (
+                f"\tAVG(AVG(\"{field_name}\")) OVER ("
+                f"{partition_clause}"
+                f"ORDER BY time "
+                f"RANGE BETWEEN INTERVAL '{moving_avg_window} seconds' PRECEDING AND CURRENT ROW"
+                f') as "{field_name}_moving_avg"'
+            )
+        else:
+            query += f'\t{aggregation}("{field_name}") as "{field_name}_{aggregation}"'
 
     return query
 
@@ -1175,11 +1175,14 @@ def build_downsample_query(
     tag_filter_clause: str = generate_tag_filter_clause(tag_values)
     
     if has_moving_avg:
-        # For moving averages, we need a different query structure without GROUP BY
-        # We'll use window functions directly on the time-ordered data
-        # Use partition_tags for PARTITION BY clause (can be empty list for no partitioning)
         partition_tags_to_use = partition_tags if partition_tags is not None else []
         fields_clause: str = generate_moving_avg_fields_string(fields_list, interval, partition_tags_to_use, moving_avg_window)
+        
+        # Build GROUP BY from partition tags + time
+        group_by_parts = ["1"]
+        for i, _ in enumerate(partition_tags_to_use):
+            group_by_parts.append(str(i + 2))
+        group_by_clause: str = ", ".join(group_by_parts)
         
         query: str = f"""
             SELECT
@@ -1191,7 +1194,8 @@ def build_downsample_query(
             AND 
                 time < '{end_iso}'
             {tag_filter_clause}
-            ORDER BY time
+            GROUP BY {group_by_clause}
+            ORDER BY time ASC
         """
     else:
         # Standard aggregation query with GROUP BY
@@ -1335,7 +1339,7 @@ def transform_to_influx_line(
 
     for row in data:
         builder = LineBuilder(measurement)
-        timestamp: int = row["_time"]
+        timestamp: int = row.get("_time") or row["time"]
         builder.time_ns(timestamp)
         for tag in tags_list:
             if tag in row and row[tag] is not None:
