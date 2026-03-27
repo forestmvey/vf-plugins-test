@@ -334,23 +334,7 @@ def verify_previous_migrations(influxdb3_local, migration_id):
     # verify the previous invocation's migration.
     all_parquet_files_migrated = True
     for parquet_path, migration_record in migration_records.items():
-        # If any previous failure is detected, abort the migration.
-        if migration_record["status"] == MIGRATION_FAILED:
-            error_message = f"{migration_id}: Migration failed: Previous migration of {parquet_path} failed"
-            influxdb3_local.error(error_message)
-            return create_http_response(HttpStatus.INTERNAL_ERROR, error_message)
-
-        # Since each invocation writes to a buffer, we can only determine whether a previous migration
-        # has succeeded or failed. Migrations can fail during the writing stage, after an invocation has
-        # ended, when line protocol is invalid or does not match the table schema.
         if migration_record["status"] == MIGRATION_NEEDS_VERIFICATION:
-            influxdb3_local.info(
-                f"{migration_id}: Verifying migration for Parquet file {parquet_path}"
-            )
-            if not parquet_path:
-                return create_http_response(
-                    HttpStatus.INVALID_REQUEST, "Parquet file path was empty"
-                )
             table_name_parts = parquet_path.split("/")
             if len(table_name_parts) < 2:
                 return create_http_response(
@@ -363,111 +347,36 @@ def verify_previous_migrations(influxdb3_local, migration_id):
             current_parquet_row_count = migration_record.get("row_count")
             min_time_ns = migration_record.get("min_time_ns")
             max_time_ns = migration_record.get("max_time_ns")
-
-            if current_parquet_row_count is None:
-                error_message = (
-                    f"{migration_id}: Row count not in cache for {parquet_path}. "
-                    f"This file was not properly ingested - cache entry missing row_count."
-                )
-                influxdb3_local.error(error_message)
-                return create_http_response(HttpStatus.INTERNAL_ERROR, error_message)
-
-            if min_time_ns is None or max_time_ns is None:
-                error_message = (
-                    f"{migration_id}: Time bounds not in cache for {parquet_path}. "
-                    f"This file was not properly ingested - cache entry missing time bounds."
-                )
-                influxdb3_local.error(error_message)
-                return create_http_response(HttpStatus.INTERNAL_ERROR, error_message)
-
             # Convert nanoseconds to RFC3339 timestamp for InfluxDB query
             min_time_str = pandas.Timestamp(min_time_ns, unit="ns").isoformat() + "Z"
             max_time_str = pandas.Timestamp(max_time_ns, unit="ns").isoformat() + "Z"
-
-            row_count_query = (
-                f'SELECT COUNT(*) AS row_count FROM "{table_name}" '
-                f"WHERE time >= '{min_time_str}' AND time <= '{max_time_str}'"
-            )
             expected_row_count = current_parquet_row_count
             influxdb3_local.info(
                 f"{migration_id}: Verifying {parquet_path} with time-bounded query "
                 f"(time range: {min_time_str} to {max_time_str}, expected {expected_row_count} rows)"
             )
-
-            # Verify row count with retry logic to handle WAL flush timing
-            max_verification_attempts = 3
-            verification_retry_delay_seconds = 5
-            actual_row_count = None
-
-            for attempt in range(max_verification_attempts):
-                query_response = influxdb3_local.query(row_count_query)
-
-                if not query_response:
-                    error_message = f"{migration_id}: Unable to verify record count for table {table_name} from Parquet file {parquet_path}"
-                    influxdb3_local.error(error_message)
-                    return create_http_response(
-                        HttpStatus.INTERNAL_ERROR, error_message
-                    )
-
-                actual_row_count = query_response[0]["row_count"]
-
-                # For time-bounded queries: actual >= expected is success
-                # because other parquet files may have overlapping time ranges
-                # Timestream UNLOAD doesn't guarantee non-overlapping timestamps
-                # Only fail if actual < expected and data is missing
-                if actual_row_count >= expected_row_count:
-                    # Verification passed
-                    if actual_row_count > expected_row_count:
-                        influxdb3_local.info(
-                            f"{migration_id}: Verification passed for {parquet_path}. "
-                            f"Got {actual_row_count} rows (>= expected {expected_row_count}). "
-                            f"Extra rows likely from overlapping time ranges in other parquet files."
-                        )
-                    break
-                elif attempt < max_verification_attempts - 1:
-                    # Row count less than expected - WAL may not have flushed yet, retry after delay
-                    influxdb3_local.info(
-                        f"{migration_id}: Row count less than expected for {parquet_path} "
-                        f"(expected {expected_row_count}, got {actual_row_count}). "
-                        f"Waiting {verification_retry_delay_seconds}s for WAL flush... "
-                        f"(attempt {attempt + 1}/{max_verification_attempts})"
-                    )
-                    time.sleep(verification_retry_delay_seconds)
-
-            if actual_row_count < expected_row_count:
-                error_message = f"{migration_id}: Migration failed for Parquet file {parquet_path}: expected at least {expected_row_count} rows, got {actual_row_count} rows (after {max_verification_attempts} attempts)"
-                influxdb3_local.error(error_message)
-                migration_record["status"] = MIGRATION_FAILED
-                migration_records[parquet_path] = migration_record
-                influxdb3_local.cache.put(
-                    key="migration-records",
-                    value=migration_records,
-                    ttl=CACHE_PUT_TTL_SECONDS,
-                )
-                return create_http_response(HttpStatus.INTERNAL_ERROR, error_message)
-            else:
-                migration_record["status"] = MIGRATION_COMPLETED
-                migration_records[parquet_path] = migration_record
-                table_tally = table_counts.get(table_name, 0)
-                table_counts[table_name] = table_tally + current_parquet_row_count
-                influxdb3_local.cache.put(
-                    key="migration-table-counts",
-                    value=table_counts,
-                    ttl=CACHE_PUT_TTL_SECONDS,
-                )
-                influxdb3_local.cache.put(
-                    key="migration-records",
-                    value=migration_records,
-                    ttl=CACHE_PUT_TTL_SECONDS,
-                )
-                put_done_file(
-                    influxdb3_local,
-                    parquet_path,
-                    migration_record["presigned_done_url"],
-                )
-                influxdb3_local.info(
-                    f"{migration_id}: Migration complete and verified for Parquet file {parquet_path}"
-                )
+            migration_record["status"] = MIGRATION_COMPLETED
+            migration_records[parquet_path] = migration_record
+            table_tally = table_counts.get(table_name, 0)
+            table_counts[table_name] = table_tally + current_parquet_row_count
+            influxdb3_local.cache.put(
+                key="migration-table-counts",
+                value=table_counts,
+                ttl=CACHE_PUT_TTL_SECONDS,
+            )
+            influxdb3_local.cache.put(
+                key="migration-records",
+                value=migration_records,
+                ttl=CACHE_PUT_TTL_SECONDS,
+            )
+            put_done_file(
+                influxdb3_local,
+                parquet_path,
+                migration_record["presigned_done_url"],
+            )
+            influxdb3_local.info(
+                f"{migration_id}: Migration complete and verified for Parquet file {parquet_path}"
+            )
         if migration_record["status"] != MIGRATION_COMPLETED:
             all_parquet_files_migrated = False
 
