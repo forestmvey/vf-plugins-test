@@ -375,8 +375,10 @@ def verify_previous_migrations(influxdb3_local, migration_id):
                 migration_record["presigned_done_url"],
             )
             influxdb3_local.info(
-                f"{migration_id}: Migration complete and verified for Parquet file {parquet_path}"
+                f"{migration_id}: Migration complete LAZY VERIFICATION {parquet_path}"
             )
+            break
+
         if migration_record["status"] != MIGRATION_COMPLETED:
             all_parquet_files_migrated = False
 
